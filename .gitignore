@@ -1,0 +1,17 @@
+# 抽出したMIDIファイル・ZIPは含めない
+casio_midi_output/
+casio_midi_output.zip
+*.zip
+
+# APK・バイナリ
+*.apk
+*.bin
+*.so
+*.dex
+
+# 一時ファイル
+__pycache__/
+*.py[cod]
+*.egg-info/
+.DS_Store
+Thumbs.db
