@@ -1,182 +1,157 @@
-# casio-mobilesongbank-midi-extractor
+# casio-smf-extractor
 
-**Casio MobileSongBank** アプリ (`jp.co.casio.MobileSongBank`) の APK に内蔵された楽曲データを標準MIDIファイル (SMF Format 1) として一括抽出するツールです。
+Casio アプリの内蔵曲データ (`.bin`) から標準MIDIファイル (SMF Format 1) を抽出するツール。
 
-[English follows Japanese]
+**MobileSongBank** (`jp.co.casio.MobileSongBank`) および **ChordanaPlay** (`jp.co.casio.chordanaplay`) に対応。
 
----
-
-## 概要
-
-Casio のキーボード連携アプリ MobileSongBank の APK には、LK-511/512/515/520/530 向けの内蔵曲データが `InternalSongsData*.bin` という形式でバンドルされています。各バイトにビット置換スクランブルが施されていますが、逆算したテーブルを適用することで標準MIDIファイルとして取り出せることがわかりました。
-
-- **対象曲数**: 5データセット × 200曲 = **1,000曲**
-- **出力形式**: SMF Format 1（22トラック前後、480 TPQ）
-- **収録内容**: J-POP・クラシック・童謡など幅広いジャンル
-- **外部ライブラリ**: 不要（Python 標準ライブラリのみ）
+[English below](#english)
 
 ---
 
 ## 使い方
 
-### 1. APK を取得・解凍する
+### 1. .bin ファイルを用意する
 
-[APKPure](https://apkpure.com/) などから `jp.co.casio.MobileSongBank` の APK をダウンロードし、ZIP として展開します。
+APK を ZIP として展開すると `assets/` 内に `InternalSongsData*.bin` が見つかります。
 
 ```bash
 cp jp.co.casio.MobileSongBank.apk msb.zip
-unzip msb.zip -d msb_extracted/
+unzip msb.zip -d msb/
+ls msb/assets/InternalSongsData*.bin
 ```
 
-`msb_extracted/assets/` の中に `InternalSongsData*.bin` と `sql/SongDB.sqlite3` が含まれていれば準備完了です。
-
-### 2. スクリプトを実行する
+### 2. 変換する
 
 ```bash
-python3 casio_smf_extract.py <assets_dir> [output_dir]
+python3 casio_smf_extract.py <file.bin> [file2.bin ...] [--db SongDB.sqlite3] [--out 出力先]
 ```
 
 **例:**
 
 ```bash
-python3 casio_smf_extract.py ./msb_extracted/assets ./casio_midi
+# 単一ファイル（曲名はMIDI内部名を使用）
+python3 casio_smf_extract.py InternalSongsData.bin
+
+# 複数ファイル＋曲名DBを指定
+python3 casio_smf_extract.py InternalSongsData.bin InternalSongsData540.bin \
+    --db SongDB.sqlite3 --out casio_midi
 ```
 
-**出力:**
-
+**出力例（複数ファイル指定時）:**
 ```
-SongDB: 1000 エントリ読み込み完了
-  default :  200 曲
-  LK512   :  200 曲
-  LK515   :  200 曲
-  LK520   :  200 曲
-  LK530   :  200 曲
+SongDB: 1200 エントリ読み込み完了
+  InternalSongsData  : 200 曲
+  InternalSongsData540: 200 曲
 
-合計: 1000 曲を casio_midi/ に出力
-ZIP: casio_midi.zip (4210 KB)
+合計: 400 曲を casio_midi/ に出力
+ZIP: casio_midi.zip (XXXX KB)
 ```
 
-出力ディレクトリ構成:
+### オプション
 
-```
-casio_midi/
-  default/
-    001AC_Doraemon.mid
-    002AC_UtiageHa.mid
-    ...
-  LK512/
-    001AC_LemonYon.mid
-    ...
-  LK515/ LK520/ LK530/
-casio_midi.zip
-```
+| オプション | 内容 |
+|-----------|------|
+| `--db SongDB.sqlite3` | 曲名データベース（assets/sql/ 内または直置き、省略可） |
+| `--out DIR` | 出力先ディレクトリ（デフォルト: `casio_midi_output`） |
+
+SongDB を指定しない場合はMIDIファイル内部のトラック名を曲名として使用します。
+
+### 動作環境
+
+- Python 3.6 以上
+- 外部ライブラリ不要（標準ライブラリのみ）
 
 ---
 
-## 動作原理（リバースエンジニアリング詳細）
+## 動作原理
 
-### ファイル構造
-
-`InternalSongsData*.bin` の先頭 `0x640` バイト（200曲 × 8バイト）がインデックス領域です。各エントリは以下の構造を持ちます：
+各 `.bin` ファイルは以下の構造を持ちます：
 
 ```
-[データ領域内オフセット: uint32 LE][データサイズ: uint32 LE]
+[インデックス領域]  N × 8 バイト
+  各エントリ: [データ領域内オフセット: uint32 LE][データサイズ: uint32 LE]
+
+[データ領域]
+  各曲データ: ビット置換でスクランブルされた SMF
 ```
 
-実際のデータ開始位置 = `0x640 + offset`。
+曲数 N はファイルによって異なります（本ツールは自動検出します）。
 
-### ビット置換スクランブル
+### ビット置換テーブル
 
-ネイティブライブラリ `libsssg.so` の `read_InternalSongData` 関数 (`VA: 0x94fd8`) を ARM64 逆アセンブルし、各バイトへの **ビット置換テーブル** を解析しました：
+ネイティブライブラリ `libsssg.so` の `read_InternalSongData` 関数（ARM64, VA: `0x94fd8`）を逆アセンブルして解析した結果、各バイトに以下のビット置換が適用されています：
 
-```python
+```
 TABLE = [5, 2, 3, 7, 1, 0, 6, 4]
-# bit i of input → bit TABLE[i] of output
+# 入力バイトのビット i → 出力バイトのビット TABLE[i]
 ```
 
-このテーブルで全バイトをデコードすると `MThd`（標準MIDIマジック）が現れます。
-
 ```python
-# 全256バイトの変換テーブルを事前展開（高速化）
 _DECODE_TABLE = bytes(
     sum(((b >> i) & 1) << TABLE[i] for i in range(8))
     for b in range(256)
 )
-
-def decode_raw(raw: bytes) -> bytes:
-    return bytes(_DECODE_TABLE[b] for b in raw)
+decoded = bytes(_DECODE_TABLE[b] for b in raw)
 ```
 
-### 検証
-
-ドラえもん (Song 0, `001AC_Doraemon.mid`) の例:
-
-| 項目 | 値 |
-|------|-----|
-| フォーマット | SMF Format 1 |
-| BPM | 160 |
-| TPQ | 480 |
-| トラック数 | 22 |
-| メロディ冒頭 | B4 B4 C#5 B4 G#4 F#4 E4 ... |
-
----
-
-## 動作環境
-
-- Python 3.6 以上
-- 外部ライブラリ不要
+デコード後は標準MIDIファイル（`MThd` マジック）として再生できます。
 
 ---
 
 ## 注意事項
 
-- 抽出した MIDI ファイルに含まれる楽曲は各著作権者が権利を持ちます。個人的な研究・学習目的以外での使用には注意してください。
-- このツールは **リバースエンジニアリング研究** の成果です。Casio の公式サービスとは無関係です。
-- APK の入手・使用は利用者の責任において適法に行ってください。
+- 抽出した MIDI に含まれる楽曲の著作権は各権利者に帰属します。個人的な研究・学習目的以外での使用には注意してください。
+- APK の入手・使用は適法に行ってください。
+- 本ツールは Casio の公式サービスとは無関係のリバースエンジニアリング研究の成果です。
 
 ---
 
----
+<a name="english"></a>
 
-## Overview (English)
+## English
 
-This tool extracts all built-in songs from the **Casio MobileSongBank** app APK (`jp.co.casio.MobileSongBank`) as standard MIDI files (SMF Format 1).
+A tool to extract standard MIDI files (SMF Format 1) from Casio app built-in song data (`.bin` files).
 
-### How it works
+Supports **MobileSongBank** (`jp.co.casio.MobileSongBank`) and **ChordanaPlay** (`jp.co.casio.chordanaplay`).
 
-The `InternalSongsData*.bin` files in the APK assets contain MIDI data scrambled with a **bit-permutation** applied to every byte. By reverse-engineering `libsssg.so` (ARM64) at `read_InternalSongData` (`VA: 0x94fd8`), the permutation table was recovered:
-
-```
-TABLE = [5, 2, 3, 7, 1, 0, 6, 4]
-```
-
-After decoding, each song is a valid SMF Format 1 MIDI file.
-
-### Quick start
+### Usage
 
 ```bash
-# Extract APK
-unzip jp.co.casio.MobileSongBank.apk -d msb/
-
-# Run extractor
-python3 casio_smf_extract.py msb/assets output_midi/
+python3 casio_smf_extract.py <file.bin> [file2.bin ...] [--db SongDB.sqlite3] [--out DIR]
 ```
 
-### Output
+**Examples:**
 
-1,000 songs across 5 datasets (default / LK512 / LK515 / LK520 / LK530), each a proper multi-track MIDI at 480 TPQ.
+```bash
+# Single file
+python3 casio_smf_extract.py InternalSongsData.bin
+
+# Multiple files with song name DB
+python3 casio_smf_extract.py InternalSongsData.bin InternalSongsData540.bin \
+    --db SongDB.sqlite3 --out casio_midi
+```
 
 ### Requirements
 
 - Python 3.6+
 - No external dependencies
 
+### How it works
+
+Each `.bin` file contains an index region followed by scrambled MIDI data. By reverse-engineering `libsssg.so` (ARM64), the bit-permutation table was recovered:
+
+```
+TABLE = [5, 2, 3, 7, 1, 0, 6, 4]
+```
+
+After decoding, each entry is a valid SMF Format 1 MIDI file. The number of songs per file is auto-detected.
+
 ### Disclaimer
 
-Extracted MIDI files are copyrighted by their respective owners. This tool is for **personal research and archival purposes only**. Obtain APKs only through legitimate means.
+Extracted MIDI files are copyrighted by their respective owners. This tool is for **personal research purposes only**. Obtain APKs only through legitimate means.
 
 ---
 
-## ライセンス / License
+## License
 
-MIT License — see [LICENSE](LICENSE)
+MIT — see [LICENSE](LICENSE)

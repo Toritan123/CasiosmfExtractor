@@ -2,119 +2,136 @@
 
 ## 解析対象
 
-- APK: `jp.co.casio.MobileSongBank`
-- ネイティブライブラリ: `lib/arm64-v8a/libsssg.so` (約1.5MB)
-- データファイル: `assets/InternalSongsData*.bin` (各約1.6MB)
+| アプリ | パッケージ名 | ネイティブライブラリ |
+|--------|-------------|-------------------|
+| MobileSongBank | `jp.co.casio.MobileSongBank` | `lib/arm64-v8a/libsssg.so` (約1.5MB) |
+| ChordanaPlay | `jp.co.casio.chordanaplay` | 同上 (共通ライブラリ) |
+
+両アプリとも同じ `libsssg.so` を共有しており、同一のスクランブル方式を使用。
 
 ---
 
-## ファイル構造解析
+## ファイル構造
 
 ### インデックス領域
 
-各 `.bin` ファイルの先頭 **0x640バイト** (200 × 8バイト) がインデックス。
+`.bin` ファイルの先頭に各曲へのインデックスが並ぶ。
 
 ```
-Offset  Size  Description
-0x000   4     Song 0: data_offset (relative to 0x640)
-0x004   4     Song 0: data_size
-0x008   4     Song 1: data_offset
-0x00C   4     Song 1: data_size
-...
-0x638   4     Song 199: data_offset
-0x63C   4     Song 199: data_size
+各エントリ: 8 バイト
+  [0..3] データ領域内オフセット (uint32, little-endian)
+  [4..7] データサイズ          (uint32, little-endian)
 ```
 
-実際のデータ = `file[0x640 + data_offset : 0x640 + data_offset + data_size]`
+実際のデータ開始位置 = `(曲数 × 8) + オフセット`
+
+**曲数はファイルによって異なる（自動検出が必要）:**
+- オフセットが単調増加かつサイズがファイル範囲内であるエントリを数える
+
+### データ領域
+
+インデックス直後から、各曲のスクランブルされたデータが連続する。
 
 ---
 
-## ビット置換の発見
+## ビット置換スクランブルの解析
 
 ### 解析箇所
 
 `libsssg.so` の `read_InternalSongData` 関数:
+- **アーキテクチャ**: ARM64
 - **仮想アドレス**: `0x94fd8`
-- ARM64 命令: `ubfx` でビットを個別抽出し、グローバルテーブルで再配置
+- **処理**: `ubfx` 命令でビットを個別抽出し、グローバルテーブル `[x26, #0x338]` で各ビットを新位置にシフトして OR で結合
 
 ### テーブルの特定
 
-候補を全40320通り試行し、デコード結果が `CMFF` / `MThd` マジックになるものを選出。
+各バイトの全8ビットを個別に追跡し、以下の置換テーブルを解析:
+
+```
+TABLE = [5, 2, 3, 7, 1, 0, 6, 4]
+# 入力バイトのビット i → 出力バイトのビット TABLE[i]
+```
+
+全 40320 通りの置換を総当たりし、デコード結果が `MThd` または `CMFF` マジックになるものを選出して確認。
+
+### 実装
 
 ```python
 TABLE = [5, 2, 3, 7, 1, 0, 6, 4]
-# bit i of input → bit TABLE[i] of output
+
+# 全256バイトの変換テーブルを事前展開（処理高速化）
+_DECODE_TABLE = bytes(
+    sum(((b >> i) & 1) << TABLE[i] for i in range(8))
+    for b in range(256)
+)
+
+def decode_raw(raw: bytes) -> bytes:
+    return bytes(_DECODE_TABLE[b] for b in raw)
 ```
 
-### 検証
+### 検証例
 
-`InternalSongsDataCmf.bin` Song 100 の先頭4バイト:
-- 変換前: `70 66 52 52`
-- 変換後: `43 4D 46 46` = `CMFF` ✓
+`InternalSongsData.bin` (MobileSongBank) Song 0 の先頭4バイト:
+- デコード前: `66 c2 45 43`
+- デコード後: `4d 54 68 64` = `MThd` ✓
 
-`InternalSongsData.bin` Song 0 の先頭4バイト:
-- 変換前: `4D 54 68 64` → 変換後: `4D 54 68 64` = `MThd` ✓  
-  *(このファイルのmagicはすでに変換済みの値と一致)*
-
----
-
-## MIDI ファイル仕様（抽出後）
-
-| 項目 | 値 |
-|------|-----|
-| フォーマット | SMF Format 1 |
-| TPQ (Ticks Per Quarter) | 480 |
-| トラック数 | 5〜26 (曲により異なる) |
-| トラック名例 | Melo, Melo_Finger, Obli A〜E, Drums, Bass, Key, GMReset, DemoMode, SystemEffect, MasterVolume, SongEnd, Phrase |
+`InternalSongsData.bin` (ChordanaPlay) Song 0 の先頭4バイト:
+- インデックス領域サイズ: `50 × 8 = 0x190` バイト
+- データ開始位置: `0x190`
+- デコード後: `4d 54 68 64` = `MThd` ✓
 
 ---
 
-## CMF フォーマット（`InternalSongsDataCmf.bin`）
+## デコード後の MIDI ファイル仕様
 
-同じビット置換でデコードすると `CMFF` マジックで始まる Casio 独自フォーマット。
+| 項目 | MobileSongBank | ChordanaPlay |
+|------|---------------|-------------|
+| フォーマット | SMF Format 1 | SMF Format 1 |
+| TPQ | 480 | 480 |
+| トラック数 | 5〜26（曲依存） | 1（メロディのみ） |
+| 収録ジャンル | J-POP・アニメ等 | クラシック・民謡 |
+
+---
+
+## CMF フォーマット（`InternalSongsDataCmf*.bin`）
+
+MobileSongBank APK には同じ曲データの別形式として CMF 版も同梱されている。同じビット置換でデコードすると `CMFF` マジックで始まる Casio 独自形式。
 
 ### CMF ヘッダー
 
 ```
-Offset  Size  Value     Description
+Offset  Size  Value     説明
 0x00    4     "CMFF"    マジック
-0x04    1     0x25      バージョン?
-0x05    3     000000    予約
+0x04    1     0x25      バージョン
+0x05    3     00 00 00  予約
 0x08    2     03 04     フォーマット情報
-0x0A    3     00 01 05  予約
-0x0D    5     (title)   曲タイトル (スクランブル)
-0x12    7     (spaces)  パディング
-0x19+   n     key-value  属性ペア
 ...
 ```
 
 ### TRAK ブロック
 
 ```
-Offset  Size  Description
-0x00    4     "TRAK"    マジック
-0x04    4     total_size (little-endian)
-0x08    4     event_data_size (little-endian)
-0x0C+   n     CMFイベントデータ
+"TRAK" [4] + total_size [4 LE] + event_data_size [4 LE] + イベントデータ
 ```
 
 ### CMF イベント形式
 
 ```
 [delta_time: VLQ]
-  if next_byte < 0x80:
-    [note: 1byte] [ch5: 1byte] [velocity: 1byte] [duration: VLQ]
-    # ch5 = MIDI ch + 5  (ch=0 → ch5=5)
-  else:
-    [cmd_lo|0x80: 1byte] [cmd_hi: 1byte]   # 2-byte VLQ CMD
-    [ch5: 1byte]
-    [params: N bytes]   # CMD値によって異なる
+  次バイト < 0x80 → Note ON:
+    [note(0-127)][ch+5(1byte)][velocity][duration: VLQ]
+  次バイト >= 0x80 → CMD(2バイトエンコード):
+    [cmd_lo | 0x80][cmd_hi]  # cmd = cmd_lo | (cmd_hi << 7)
+    [ch+5(1byte)]
+    [params...]              # CMD値に応じた長さ
 ```
 
-主要 CMD 値:
+主要 CMD:
 - `0x84`: Program Change (params: bank, prog)
 - `0x92`: Pitch Bend (params: hi, lo)
-- `0x93`, `0x8C`, `0xA9`, `0x8D`: Control Change
+- `0x93` 等: Control Change
+
+**用途**: CMF 版はキーボード本体への転送用（`nTransferSongData`）。SMF 版はアプリ内再生・楽譜表示用。CMF 版のサイズは SMF 版の約 63%。
 
 ---
 
@@ -124,30 +141,29 @@ Offset  Size  Description
 
 | カラム | 内容 |
 |--------|------|
-| `file_name` | 曲ファイル名 (例: `001AC_Doraemon`) |
-| `title` | 曲タイトル |
+| `file_name` | 曲の識別名（例: `001AC_Doraemon`） |
+| `title` | 曲タイトル（日本語） |
 | `artist` | アーティスト名 |
-| `db_index` | 各データセットでのインデックス番号 (スペース区切り5値, `n`=未収録) |
-| `iap_contents_id` | Google Play IAP コンテンツID |
+| `db_index` | 各データセットでのインデックス番号（スペース区切り、`n`=未収録、`-`=追加DL曲） |
+| `iap_contents_id` | アプリ内課金コンテンツID |
 
-`db_index` の並び順: `default LK512 LK515 LK520 LK530`
-
-例: `"1 n n n n"` → default の1曲目、他のデータセットには未収録
+`db_index` の順序はデータセットの追加順に対応し、バージョンアップで列数が増加する（旧: 5値、新: 6値）。
 
 ---
 
 ## 追加ダウンロード曲について
 
-SongDB に登録された602曲 (`db_index='-'`) は追加購入曲。
+SongDB に `db_index = '-'` で登録された曲は追加購入曲。
 
-ダウンロードURL: `https://mobilesongbank.com/dlfprcheck/dlforproducts.php`
+ダウンロードエンドポイント:
+```
+POST https://mobilesongbank.com/dlfprcheck/dlforproducts.php
+```
 
 必要なパラメータ:
-```
-modelname=...&appname=...&localeid=...
-&uniqid=<デバイス固有ID>  ← libsssg.so の nGetUniqID873Thread が生成
-&signature=<Google Play 購入レシート署名>
-&dltype=...&filename=...&json=...
-```
+- `uniqid`: デバイス固有ID（`libsssg.so` 内 `nGetUniqID873Thread` が生成）
+- `signature`: App Store / Google Play の購入レシート署名
 
-`uniqid` はデバイス固有かつネイティブライブラリ内で生成されるため、**実機なしの自動ダウンロードは不可**。root済み端末でアプリデータから直接取得した `.bin` ファイルは同じビット置換でデコード可能と推測される。
+いずれもデバイス・購入アカウントに紐付いており、**実機なしの自動ダウンロードは不可能**。
+
+購入済みの場合、ダウンロードされた曲データはアプリのサンドボックス内（iOS: `Library/Application Support/` など Documents 外）に保存され、ファイル形式・スクランブル方式は内蔵曲と同一と推測される。
