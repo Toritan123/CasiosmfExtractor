@@ -146,6 +146,18 @@ python3 casio_msb_download.py \
 `LK*SB*` の 6 件は鍵盤機種別の「内蔵曲パック」で、中身は他の個別配信曲の束
 （重複あり）。ユニーク MIDI は **703 曲** になります。
 
+ダウンロード後にファイル名を曲名へ変換するには `casio_msb_rename.py`：
+
+```bash
+python3 casio_msb_rename.py \
+    --src msb_downloads/mid \
+    --dst msb_downloads/mid_named \
+    --db /path/to/SongDB.sqlite3
+# 例: 001AC_Doraemon.mid  →  ドラえもん - 星野源.mid
+```
+
+同名曲は ` (2)`, ` (3)` で自動デデュープされます。
+
 ---
 
 ## 動作原理
@@ -264,6 +276,19 @@ Python stdlib and include an extra `.cmf` (Casio format) and `.fmc`
 The 6 `LK*SB*` entries are per-keyboard "internal-song packs" that
 bundle other individually-downloadable songs, so the unique MIDI count
 is **703**.
+
+To rename the downloaded MIDIs to `<title> - <artist>.mid` (e.g.
+`001AC_Doraemon.mid` → `ドラえもん - 星野源.mid`):
+
+```bash
+python3 casio_msb_rename.py \
+    --src msb_downloads/mid \
+    --dst msb_downloads/mid_named \
+    --db /path/to/SongDB.sqlite3
+```
+
+Songs with the same title (different arrangements) are deduplicated
+with ` (2)`, ` (3)` suffixes.
 
 ### Requirements
 
