@@ -1,6 +1,7 @@
 # 抽出したMIDIファイル・ZIPは含めない
 casio_midi_output/
 casio_midi_output.zip
+cms_downloads/
 *.zip
 
 # APK・バイナリ

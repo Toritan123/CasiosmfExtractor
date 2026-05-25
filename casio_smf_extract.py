@@ -84,32 +84,59 @@ def safe_filename(name: str) -> str:
     return name[:80] if name else ''
 
 # ─── SongDB の読み込み ────────────────────────────
+# CMS 用の固定 ds_id（cms_songs.db の SP 行は rowid 順で bin に並ぶ）
+DS_ID_CMS = 99
+
+
+def _is_cms_db(conn: sqlite3.Connection) -> bool:
+    """cms_songs.db (CASIO MUSIC SPACE) か判定。songs テーブルに file_id 列があれば真。"""
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(songs)")}
+    except sqlite3.Error:
+        return False
+    return "file_id" in cols and "data_type" in cols
+
+
 def load_song_db(db_path: str) -> dict:
     """
-    SongDB.sqlite3 を読み込んで {(ds_id, 0-based_index): file_name} を返す。
-    db_index 列の値はスペース区切りで各データセットのインデックス番号を示す。
-    'n' は未収録を意味する。
+    SongDB.sqlite3 (MobileSongBank/ChordanaPlay) または
+    cms_songs.db (CASIO MUSIC SPACE) を読み込んで
+    {(ds_id, 0-based_index): file_name} を返す。
     """
-    song_map = {}
+    song_map: dict = {}
     if not db_path or not os.path.exists(db_path):
         return song_map
     try:
         conn = sqlite3.connect(db_path)
-        for file_name, db_index in conn.execute("SELECT file_name, db_index FROM songs"):
-            for ds_id, part in enumerate(db_index.split()):
-                if part != 'n' and part != '-':
-                    try:
-                        song_map[(ds_id, int(part) - 1)] = file_name
-                    except ValueError:
-                        pass
+        if _is_cms_db(conn):
+            # CMS: data_type='SP' の行が rowid 順で InternalSongsData.bin に並ぶ
+            rows = conn.execute(
+                "SELECT file_id FROM songs WHERE data_type='SP' ORDER BY rowid"
+            ).fetchall()
+            for idx, (file_id,) in enumerate(rows):
+                if file_id:
+                    song_map[(DS_ID_CMS, idx)] = file_id
+        else:
+            # 従来形式 (SongDB.sqlite3): file_name / db_index 列
+            for file_name, db_index in conn.execute(
+                "SELECT file_name, db_index FROM songs"
+            ):
+                for ds_id, part in enumerate(db_index.split()):
+                    if part != 'n' and part != '-':
+                        try:
+                            song_map[(ds_id, int(part) - 1)] = file_name
+                        except ValueError:
+                            pass
         conn.close()
     except Exception as e:
         print(f"  [警告] SongDB 読み込み失敗: {e}", file=sys.stderr)
     return song_map
 
-def guess_ds_id(bin_path: str) -> int | None:
+def guess_ds_id(bin_path: str, song_map: dict | None = None) -> int | None:
     """
     ファイル名のパターンから SongDB の ds_id を推測する。
+    cms_songs.db の場合は song_map のキーから検出した DS_ID_CMS を返す。
+
     InternalSongsData.bin      → 0
     InternalSongsData512.bin   → 1
     InternalSongsData515.bin   → 2
@@ -118,6 +145,12 @@ def guess_ds_id(bin_path: str) -> int | None:
     InternalSongsData540.bin   → 5
     それ以外                    → None
     """
+    # CMS 形式の DB が読み込まれていて、bin 名が CASIO MUSIC SPACE 用ならそちらを優先
+    if song_map and any(k[0] == DS_ID_CMS for k in song_map):
+        stem = os.path.splitext(os.path.basename(bin_path))[0]
+        if stem == 'InternalSongsData':
+            return DS_ID_CMS
+
     stem = os.path.splitext(os.path.basename(bin_path))[0]  # e.g. "InternalSongsData540"
     suffix = stem.replace('InternalSongsData', '')           # e.g. "540" or ""
     mapping = {'': 0, '512': 1, '515': 2, '520': 3, '530': 4, '540': 5}
@@ -137,7 +170,7 @@ def extract_bin(bin_path: str, song_map: dict, out_dir: str) -> int:
         return 0
 
     index_size = n_songs * ENTRY_SIZE
-    ds_id = guess_ds_id(bin_path)
+    ds_id = guess_ds_id(bin_path, song_map)
 
     os.makedirs(out_dir, exist_ok=True)
 
