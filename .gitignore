@@ -2,6 +2,8 @@
 casio_midi_output/
 casio_midi_output.zip
 cms_downloads/
+msb_downloads/
+msb_download.log
 *.zip
 
 # APK・バイナリ

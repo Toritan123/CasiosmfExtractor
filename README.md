@@ -1,12 +1,12 @@
 # casio-smf-extractor
 
 Casio アプリの内蔵曲データ (`.bin`) から標準MIDIファイル (SMF Format 1) を抽出するツール。
-**CASIO MUSIC SPACE** のフル曲 MIDI/MP3/PDF を公開エンドポイントから一括ダウンロードする補助スクリプトも同梱。
+**MobileSongBank** および **CASIO MUSIC SPACE** のフル曲 MIDI を公開エンドポイントから一括ダウンロードする補助スクリプトも同梱。
 
 対応アプリ:
-- **MobileSongBank** (`jp.co.casio.MobileSongBank`) — bin 抽出
+- **MobileSongBank** (`jp.co.casio.MobileSongBank`) — bin 抽出 + Web API ダウンロード (709曲)
 - **ChordanaPlay** (`jp.co.casio.chordanaplay`) — bin 抽出
-- **CASIO MUSIC SPACE** (`jp.co.casio.CasioMusicCity`) — bin 抽出 + Web API ダウンロード
+- **CASIO MUSIC SPACE** (`jp.co.casio.CasioMusicCity`) — bin 抽出 + Web API ダウンロード (506曲)
 
 [English below](#english)
 
@@ -111,6 +111,43 @@ bin から抽出した SP 50曲（簡易MIDI）と API で取得したフル版M
 
 ---
 
+## MobileSongBank 追加ダウンロード曲
+
+`casio_msb_download.py` は MobileSongBank の公開エンドポイント
+`https://mobilesongbank.com/dlfprcheck/dlfortrial.php` (`.lhc`) /
+`dlfortrialzip.php` (`.zip`) に POST して、アプリ内課金の追加ダウンロード曲
+709 曲を取得します。**認証不要**、`SongDB.sqlite3`（APK 内 `assets/sql/`）が必要です。
+
+```bash
+# 全 709 曲を 10 並列で取得＋自動解凍
+python3 casio_msb_download.py \
+    --db /path/to/assets/sql/SongDB.sqlite3 \
+    --workers 10 --skip-existing
+
+# 出力構成:
+#   msb_downloads/raw/        <file_name>.lhc / .zip  (生アーカイブ)
+#   msb_downloads/extracted/  <file_name>.mid (+ .cmf .fmc — zip 12曲のみ)
+```
+
+| オプション | デフォルト | 内容 |
+|-----------|-----------|------|
+| `--db` | `SongDB.sqlite3` | `SongDB.sqlite3` のパス |
+| `--out` | `msb_downloads` | 出力先 |
+| `--filter` | `(なし)` | SQL LIKE で file_name を絞り込み（例: `001AC%%`） |
+| `--workers` | `4` | 並列数 |
+| `--include-internal` | off | 内蔵曲 (`iap_contents_id='-'`) も対象に含める |
+| `--no-extract` | off | アーカイブ展開を行わない |
+| `--skip-existing` | off | 既存ファイルをスキップ |
+
+`.lhc` は標準 LHA (lh5) 形式で、解凍に `7z` (`brew install p7zip`) が必要です。
+`.zip` は Python 標準ライブラリで解凍します。レスポンスにはマジックバイト検査
+(`-lh5` / `PK`) を行い、HTML エラーページの誤保存を防いでいます。
+
+`LK*SB*` の 6 件は鍵盤機種別の「内蔵曲パック」で、中身は他の個別配信曲の束
+（重複あり）。ユニーク MIDI は **703 曲** になります。
+
+---
+
 ## 動作原理
 
 各 `.bin` ファイルは以下の構造を持ちます：
@@ -159,12 +196,12 @@ decoded = bytes(_DECODE_TABLE[b] for b in raw)
 ## English
 
 A tool to extract standard MIDI files (SMF Format 1) from Casio app built-in song data (`.bin` files),
-plus a companion downloader for the full MIDI/MP3/PDF assets of **CASIO MUSIC SPACE**.
+plus companion downloaders for the full MIDI catalogs of **MobileSongBank** and **CASIO MUSIC SPACE**.
 
 Supports:
-- **MobileSongBank** (`jp.co.casio.MobileSongBank`) — bin extraction
+- **MobileSongBank** (`jp.co.casio.MobileSongBank`) — bin extraction + Web API download (709 songs)
 - **ChordanaPlay** (`jp.co.casio.chordanaplay`) — bin extraction
-- **CASIO MUSIC SPACE** (`jp.co.casio.CasioMusicCity`) — bin extraction + Web API download
+- **CASIO MUSIC SPACE** (`jp.co.casio.CasioMusicCity`) — bin extraction + Web API download (506 songs)
 
 ### Usage
 
@@ -205,10 +242,33 @@ The 50 SP songs that ship inside `InternalSongsData.bin` are simplified
 versions for on-keyboard playback. The API serves richer full versions
 (2–10× longer, with accompaniment tracks) — both are worth keeping.
 
+### Downloading the full MobileSongBank catalog (709 songs)
+
+`casio_msb_download.py` POSTs `filename=<file_name>.lhc` (or `.zip`) to
+`https://mobilesongbank.com/dlfprcheck/dlfortrial.php` /
+`dlfortrialzip.php` — **no auth required**.
+You need `SongDB.sqlite3` (from the MobileSongBank APK `assets/sql/`).
+
+```bash
+# All 709 IAP songs, extracted into msb_downloads/extracted/*.mid
+python3 casio_msb_download.py \
+    --db /path/to/assets/sql/SongDB.sqlite3 \
+    --workers 10 --skip-existing
+```
+
+`.lhc` archives are standard LHA (lh5) format and require `7z`
+(`brew install p7zip`) to extract; `.zip` archives are handled by the
+Python stdlib and include an extra `.cmf` (Casio format) and `.fmc`
+(keyboard light guide) alongside the `.mid`.
+
+The 6 `LK*SB*` entries are per-keyboard "internal-song packs" that
+bundle other individually-downloadable songs, so the unique MIDI count
+is **703**.
+
 ### Requirements
 
 - Python 3.6+
-- No external dependencies
+- No external Python dependencies (`7z` / `p7zip` needed for `.lhc` extraction)
 
 ### How it works
 
