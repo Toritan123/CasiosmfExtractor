@@ -11,6 +11,7 @@
 | `CMF_FORMAT.md` | `.cmf`（Casio Music File Format）コンテナ仕様。674曲で検証済み。 |
 | `casio_cmf_parse.py` | `.cmf` コンテナ構造のダンプ／検証ツール。 |
 | `FMC_FORMAT.md` | `.fmc`（運指ガイド）解析メモ。レコード形式は判明、ボディ暗号化が未解決。 |
+| `SOUND_ENGINE.md` | 音源解析。合成音源のためサンプルROM無し。録音にはAndroid実行が必要。 |
 
 ## メモ
 
