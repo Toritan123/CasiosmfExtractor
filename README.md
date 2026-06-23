@@ -1,7 +1,12 @@
-# casio-smf-extractor
+# casio-music-extractor
 
-Casio アプリの内蔵曲データ (`.bin`) から標準MIDIファイル (SMF Format 1) を抽出するツール。
-**MobileSongBank** および **CASIO MUSIC SPACE** のフル曲 MIDI を公開エンドポイントから一括ダウンロードする補助スクリプトも同梱。
+Casio 鍵盤アプリから楽曲データを取り出すツール群。
+
+- **内蔵曲の抽出**: アプリ内蔵データ (`.bin`) から標準MIDIファイル (SMF Format 1) を復号・抽出
+- **追加曲の一括ダウンロード**: **MobileSongBank** / **CASIO MUSIC SPACE** のフル曲 MIDI を公開エンドポイントから取得
+- **独自フォーマット解析**: `.cmf`（レッスン譜面）/ `.fmc`（運指ガイド）のリバースエンジニアリング（[`research/`](research/)）
+
+> 旧称 `casio-smf-extractor`。対応範囲が SMF 抽出を超えたため改名（旧URLは自動リダイレクト）。
 
 対応アプリ:
 - **MobileSongBank** (`jp.co.casio.MobileSongBank`) — bin 抽出 + Web API ダウンロード (709曲)
@@ -207,8 +212,13 @@ decoded = bytes(_DECODE_TABLE[b] for b in raw)
 
 ## English
 
-A tool to extract standard MIDI files (SMF Format 1) from Casio app built-in song data (`.bin` files),
-plus companion downloaders for the full MIDI catalogs of **MobileSongBank** and **CASIO MUSIC SPACE**.
+Tools to pull music data out of Casio keyboard apps:
+
+- **Built-in song extraction**: decode standard MIDI files (SMF Format 1) from in-app `.bin` data
+- **Add-on song downloads**: fetch full-song MIDI for **MobileSongBank** / **CASIO MUSIC SPACE** from their public endpoints
+- **Proprietary format analysis**: reverse engineering of `.cmf` (lesson score) / `.fmc` (fingering guide) under [`research/`](research/)
+
+> Formerly `casio-smf-extractor`; renamed once it outgrew plain SMF extraction (old URLs auto-redirect).
 
 Supports:
 - **MobileSongBank** (`jp.co.casio.MobileSongBank`) — bin extraction + Web API download (709 songs)
