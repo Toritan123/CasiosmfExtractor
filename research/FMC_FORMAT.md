@@ -37,25 +37,53 @@ finger    : u8      (1 byte)  — 指番号 (1–5)
 
 ---
 
-## 未解決：ボディが暗号化されている
+## ボディは「暗号化」ではなく独自圧縮（特定済み）
 
-`offset 7` 以降は全256バイト値がほぼ均等分布の**高エントロピー**。
-上記 10 バイトレコードをそのまま当てはめても健全な値（note 0–127 / finger 1–5 /
-時刻単調増加）にならず、**復号層がある**ことが確定。
+`offset 7` 以降は全256バイト値がほぼ均等分布の**高エントロピー**で、生の 10 バイト
+レコードを当てても健全な値にならない。標準 zlib/bz2/lzma でも展開不可。
+→ 当初は暗号化を疑ったが、`libsssg.so` の解析で **独自圧縮**と判明。
 
-- `read_Fingering` 自体は `FILE*` に対し素の `fread` を行うだけ → 復号は
-  ファイルを開いて `read_Fingering` に渡す**前段**で行われている。
-- `read_Fingering` への直接 `BL` 命令が `.text` 全体に見つからない →
-  関数ポインタ経由で呼ばれており、ローダー（復号を含む）の特定には
-  ポインタテーブル/vtable の追跡が必要。
-- `libsssg.so` に `decrypt`/`aes`/`xor`/`lzh` 等のシンボルは無く、
-  独自ルーチンと推定。
+### 圧縮方式：BlockSort(BWT) + MTF + ZLE + RangeCoder
 
-### 次にやるなら
-1. `.fmc` を開く `fopen`／ローダー関数を特定（`cExtendedSongPathFmc`,
-   `extendedSongNameFmc`, `proc_GetFingering`, `FingerGuideManager_nUpdate` 周辺）。
-2. その関数内の復号ループ（XOR鍵 / バイト置換 / 簡易ストリーム暗号）を解析。
-3. 復号後に上記 10 バイトレコードを検証（同梱 `.mid`/`.cmf` の音符と時刻照合）。
+`libsssg.so` の `decode()`（VA 0x73220）が展開本体で、パイプラインは：
+
+```
+init_range_coder_global → range_decode → mtf_decode → blocksort_decode(逆BWT)
+                          （ブロック単位でループ、ブロックヘッダは fgetc で読む）
+```
+
+バイナリ内文字列 **`"BlockSroting and RangeCoder Compressor Sample Program ver 2.0"`**
+（"Sroting" は原典のタイポ）が決定的な指紋。これは「お気楽 Python プログラミング」
+（M.Hiroi）の **ブロックソート法サンプル `bsrc1.py`**（BlockSort + MTF + ZLE +
+RangeCoder）がベース。参照: https://www.nct9.ne.jp/m_hiroi/light/pyalgo49.html
+
+関連シンボル: `range_decode` `range_encode` `init_range_coder_global`
+`mtf_decode` `mtf_encode` `blocksort_decode` `blocksort_encode` `rle_decode`
+`decode` `decode_file`（`exit()`を呼ぶ開発用ハーネス）。
+
+### コンテナ形式（参照実装より）
+
+```
+size   : u32 BE  展開後の総バイト数
+top    : u32 BE  逆BWTのプライマリインデックス
+r_size : u32 BE  RLE/ZLE後のデータ長
+... RangeCoder 圧縮ストリーム ...
+```
+
+逆BWT（分布数えソート）:
+```
+count[256]; for b in buff: count[b]++
+累積和 count
+for x in range(size-1,-1,-1): c=buff[x]; count[c]--; idx[count[c]]=x
+x=idx[top]; for _ in size: out(buff[x]); x=idx[x]
+```
+
+### 残り作業（最後の一押し）
+- Casio版 RangeCoder の定数（TOP/BOTTOM・正規化）を `range_decode` /
+  `init_range_coder_global` の逆アセンブルで確定し、参照実装と突き合わせる。
+- `decode()` のブロックヘッダ framing（fgetc 列）を確定。
+- 展開後に 10 バイトレコードを検証（同梱 `.mid`/`.cmf` の音符・時刻と照合）。
+- 検証できたら `casio_fmc_decode.py`（展開→運指 CSV/JSON 出力）を作成。
 
 ---
 
