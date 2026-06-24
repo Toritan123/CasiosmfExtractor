@@ -61,28 +61,56 @@ RangeCoder）がベース。参照: https://www.nct9.ne.jp/m_hiroi/light/pyalgo4
 `mtf_decode` `mtf_encode` `blocksort_decode` `blocksort_encode` `rle_decode`
 `decode` `decode_file`（`exit()`を呼ぶ開発用ハーネス）。
 
-### コンテナ形式（参照実装より）
+### コンテナ形式（バイナリ解析で確定・ファイルサイズで検証済み）
+
+Casio 版は参照と異なり **`casi` ヘッダ + ブロック型**：
 
 ```
-size   : u32 BE  展開後の総バイト数
-top    : u32 BE  逆BWTのプライマリインデックス
-r_size : u32 BE  RLE/ZLE後のデータ長
-... RangeCoder 圧縮ストリーム ...
+"casi"   4 bytes  マジック
+version  1 byte
+type     1 byte   0 = RLEなし / 非0 = rle_decode(n=7) を適用
+top      3 bytes BE  逆BWTのプライマリインデックス
+r_size   3 bytes BE  RangeCoder 圧縮データのバイト長
+data     r_size bytes
 ```
 
-逆BWT（分布数えソート）:
+検証: Birthday = 12バイトヘッダ + r_size 15661 = **15673**（実ファイルサイズ一致）。
+SBA00599 = 12 + 23511 = **23523**（一致, type=1）。
+
+### 展開パイプライン（確定）
+
 ```
-count[256]; for b in buff: count[b]++
-累積和 count
-for x in range(size-1,-1,-1): c=buff[x]; count[c]--; idx[count[c]]=x
-x=idx[top]; for _ in size: out(buff[x]); x=idx[x]
+range_decode(Freq012m, EOS=256) → [type≠0 なら rle_decode(n=7)]
+→ mtf_decode → 逆BWT(top)
+→ 平文 = 10バイトレコード [u64 LE time][u8 note][u8 finger 1..5]
 ```
 
-### 残り作業（最後の一押し）
-- Casio版 RangeCoder の定数（TOP/BOTTOM・正規化）を `range_decode` /
-  `init_range_coder_global` の逆アセンブルで確定し、参照実装と突き合わせる。
-- `decode()` のブロックヘッダ framing（fgetc 列）を確定。
-- 展開後に 10 バイトレコードを検証（同梱 `.mid`/`.cmf` の音符・時刻と照合）。
+- **RangeCoder**: M.Hiroi pyalgo36 版（`MIN_RANGE=0x1000000`, SHIFT=24, キャリー型）。
+  バイナリの正規化定数 `0xffffff` と一致。**算術は検証済み**。
+- **終端**: シンボル **256 が EOS マーカー**（`range_decode` が 0x100 で停止）。
+- 逆BWT（分布数えソート）:
+  ```
+  count[256]; 各バイトを集計 → 累積和
+  for x in range(size-1,-1,-1): c=buff[x]; count[c]--; idx[count[c]]=x
+  x=idx[top]; for _ in size: out(buff[x]); x=idx[x]
+  ```
+
+実装: [`casio_fmc_decode.py`](casio_fmc_decode.py)（framing・RangeCoder・逆BWT・
+パイプライン全段を実装、実ファイルで動作）。
+
+### 残り作業（最後の一押し — 適応モデルの定数）
+
+展開器はパイプライン全段が動くが、**適応モデルの各コンテキスト定数が未確定**のため
+RangeCoder が徐々にズレ、BWT 後がまだ有効レコードにならない（Birthday: 4517レコード中
+有効101）。`libsssg.so` は**混合法**（`mix_012_frequency` / `mix_first_frequency` /
+`select_second_frequency` = Freq012m）を使い、各コンテキストの `(inc, limit)` は
+`init_frequency_table` が設定。`update_frequency` の解析で構造（16bitカウント,
+GR=16グループ, inc/limit による rescale）は参照の `Freq` と一致を確認済み。
+
+→ 残るは `init_frequency` / `init_frequency_table` の各呼び出し引数（コンテキスト毎の
+`size, inc, limit`）と `mix_012_frequency` の混合式をビット完全一致で抽出すること。
+これが揃えば RangeCoder が同期し、10バイトレコードが復元される（同梱 `.mid`/`.cmf` の
+音符・時刻で照合可能）。
 - 検証できたら `casio_fmc_decode.py`（展開→運指 CSV/JSON 出力）を作成。
 
 ---
