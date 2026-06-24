@@ -98,19 +98,34 @@ range_decode(Freq012m, EOS=256) → [type≠0 なら rle_decode(n=7)]
 実装: [`casio_fmc_decode.py`](casio_fmc_decode.py)（framing・RangeCoder・逆BWT・
 パイプライン全段を実装、実ファイルで動作）。
 
-### 残り作業（最後の一押し — 適応モデルの定数）
+### 適応モデルの定数（`get_frequency(size, limit, inc)` から抽出）
 
-展開器はパイプライン全段が動くが、**適応モデルの各コンテキスト定数が未確定**のため
-RangeCoder が徐々にズレ、BWT 後がまだ有効レコードにならない（Birthday: 4517レコード中
-有効101）。`libsssg.so` は**混合法**（`mix_012_frequency` / `mix_first_frequency` /
-`select_second_frequency` = Freq012m）を使い、各コンテキストの `(inc, limit)` は
-`init_frequency_table` が設定。`update_frequency` の解析で構造（16bitカウント,
-GR=16グループ, inc/limit による rescale）は参照の `Freq` と一致を確認済み。
+`get_frequency` の引数順は **(size, limit, inc)**（逆アセンブルで確定）。
+`init_range_coder_global` の呼び出しから：
 
-→ 残るは `init_frequency` / `init_frequency_table` の各呼び出し引数（コンテキスト毎の
-`size, inc, limit`）と `mix_012_frequency` の混合式をビット完全一致で抽出すること。
-これが揃えば RangeCoder が同期し、10バイトレコードが復元される（同梱 `.mid`/`.cmf` の
-音符・時刻で照合可能）。
+| 呼び出し | 対応（参照 Freq012m / Freq1m） | 一致 |
+|---|---|---|
+| `Freq(3, 0x140, 2)` ×81 | context1（order-4 / 0-1-2） | inc一致, **limit=0x140**（参照0x100） |
+| `Freq(3, 0x140, 14)` ×3 | context2（order-1 / 0-1-2） | inc一致, limit=0x140 |
+| `Freq(8, 0x200, 4)` ×64 | Freq1m.context1 | **完全一致** |
+| `Freq(8, 0x200, 12)` | Freq1m.context2 | **完全一致** |
+| `Freq(2^x, 0x800, 4)` | Freq1m.context3[x] | **完全一致** |
+| `Freq(?, 0x140, 4)` | （参照に無い追加コンテキスト） | ★未解決 |
+
+**`LIMIT1 = 0x140`（参照の 0x100 と異なる）を反映すると、range_decode が
+シンボル256(EOS)で綺麗に停止し、復号長がレコード境界に一致**
+（Birthday: 38480 = 3848×10）。`mtf_decode` + 逆BWT はラウンドトリップ単体検証済み。
+
+### 残り作業（最後の一押し）
+
+mtf_decode 後のバッファがまだ真の BWT 出力（約40%がゼロのはず）にならず一様分布
+＝ range_decode の出力がまだ正確な MTF ストリームでない。原因は上表の
+**追加コンテキスト `Freq(?,0x140,4)` と `mix_012_frequency` の正確な混合式**。
+
+→ 残タスク: `mix_012_frequency` / `mix_first_frequency` / `select_second_frequency` /
+`search_code` を逆アセンブルし、3つのコンテキスト（inc=2 order-4 / inc=14 order-1 /
+inc=4 ?）の混合方法をビット完全一致で再現する。これで range_decode が完全一致し、
+逆BWT 後に 10バイト運指レコードが復元される（同梱 `.mid`/`.cmf` の音符・時刻で照合）。
 - 検証できたら `casio_fmc_decode.py`（展開→運指 CSV/JSON 出力）を作成。
 
 ---

@@ -14,7 +14,12 @@ Pipeline (from libsssg.so decode() @0x73220, matches M.Hiroi bsrc1.py):
 STATUS:
   [VERIFIED] container framing, pipeline order, RangeCoder math (pyalgo36,
              MIN_RANGE=0x1000000), EOS=256 termination, inverse BWT.
-  [GAP] the adaptive model's exact per-context constants. libsssg.so uses
+  [PROGRESS] LIMIT1=0x140 (from get_frequency args) makes range_decode hit
+             EOS=256 cleanly at a record-aligned length (Birthday: 38480 = 3848*10).
+             mtf_decode + inverse BWT independently round-trip-verified.
+  [GAP] the model's exact CONTEXT STRUCTURE still differs from the public
+        reference (an extra get_frequency(?,0x140,4) context exists), so the
+        mtf-decoded buffer is not yet the true BWT output. libsssg.so uses
         the MIXED method (mix_012_frequency / mix_first_frequency /
         select_second_frequency = Freq012m), with each context's (inc,limit)
         set by init_frequency_table. The public-reference Freq012m constants
@@ -185,7 +190,7 @@ class Freq:
 #
 # structured model
 #
-LIMIT1 = 0x100
+LIMIT1 = 0x140  # VERIFIED from libsssg.so get_frequency(3,0x140,inc); ref used 0x100
 LIMIT2 = 0x200
 LIMIT3 = 0x800
 
